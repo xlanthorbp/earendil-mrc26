@@ -8,7 +8,8 @@
 # ---------------------------------------------------------
 hardware_bridge:
   ros__parameters:
-    port: "/dev/ttyACM0"          # Arduino Seri Port Aygıt Yolu
+    port: "/dev/ttyACM0"          # Arduino Mega Seri Port (Motor Sürücü)
+    mag_port: "/dev/ttyUSB0"      # Arduino Uno Seri Port (QMC5883L Manyetometre)
     baudrate: 115200              # Seri haberleşme hızı
     wheel_radius: 0.033           # Tekerlek yarıçapı [metre]
     wheel_separation: 0.160       # İki tekerlek arası mesafe [metre]
@@ -26,7 +27,7 @@ hardware_bridge:
 # ---------------------------------------------------------
 gps_node:
   ros__parameters:
-    gps_port: "/dev/ttyUSB0"      # GPS alıcısının seri portu
+    gps_port: "/dev/ttyUSB1"      # GPS alıcısının seri portu (usb1)
     gps_baud: 115200              # GPS seri port baud hızı
     min_pwm: 60                   # Otonom sürüş minimum PWM hızı
     max_pwm: 90                   # Otonom sürüş maksimum PWM hızı

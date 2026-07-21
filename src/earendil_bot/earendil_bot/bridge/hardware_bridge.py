@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 Hardware Bridge Node for Earendil Bot (MRC 2026)
-Raspberry Pi 5 -> Arduino Mega (engine.ino)
------------------------------------------
-1. /cmd_vel (Twist) mesajlarını engine.ino string komutlarına çevirir:
+Raspberry Pi 5 -> Arduino Mega (engine.ino) & Arduino Uno (magnetometer.ino)
+---------------------------------------------------------------------------
+1. /cmd_vel (Twist) mesajlarını Arduino Mega'ya (engine.ino) iletir:
    - ileri_hizli / ileri_yavas
    - geri_hizli / geri_yavas
    - sag_hizli / sag_yavas
    - sol_hizli / sol_yavas
    - dur
-2. Arduino seri portundan gelen sensör verilerini (Manyetometre / Heading) okur.
+2. Arduino Uno'dan (magnetometer.ino) gelen sensör verilerini (Manyetometre / Heading) okur.
 """
 
 import math
@@ -29,12 +29,14 @@ class HardwareBridgeNode(Node):
         super().__init__('hardware_bridge')
 
         # Parametreler (hardware_params.yaml'den yüklenir)
-        self.declare_parameter('port', '/dev/ttyACM0')
+        self.declare_parameter('port', '/dev/ttyACM0')      # Arduino Mega (Motorlar)
+        self.declare_parameter('mag_port', '/dev/ttyUSB0')  # Arduino Uno (Manyetometre)
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('heading_offset', 0.0)
         self.declare_parameter('motor_watchdog_timeout', 1.0)
 
         self.port = self.get_parameter('port').value
+        self.mag_port = self.get_parameter('mag_port').value
         self.baudrate = self.get_parameter('baudrate').value
         self.heading_offset = self.get_parameter('heading_offset').value
         self.motor_watchdog_timeout = self.get_parameter('motor_watchdog_timeout').value
@@ -42,41 +44,64 @@ class HardwareBridgeNode(Node):
         # Durum Değişkenleri
         self.last_cmd = "dur"
         self.last_cmd_time = time.time()
-        self.serial_buffer = ""
-        self.buffer_lock = threading.Lock()
         self.serial_lock = threading.Lock()
 
-        # Seri Bağlantı
-        self.ser = None
-        self._connect_serial()
+        # Seri Bağlantılar
+        self.ser_mega = None
+        self.ser_uno = None
+        self._connect_serials()
 
         # ROS 2 Yayıncı & Aboneler
         self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self._cmd_callback, 10)
         self.led_sub = self.create_subscription(String, '/mode/led', self._led_callback, 10)
         self.mag_pub = self.create_publisher(Float32, '/mag/heading', 10)
 
-        # Seri Port Okuma Thread'i
-        self.reader_thread = threading.Thread(target=self._serial_reader, daemon=True)
-        self.reader_thread.start()
+        # Seri Port Okuma Thread'leri
+        self.reader_threads = []
+        if self.ser_uno and self.ser_uno != self.ser_mega:
+            t_uno = threading.Thread(target=self._serial_reader_uno, daemon=True)
+            t_uno.start()
+            self.reader_threads.append(t_uno)
+
+        if self.ser_mega:
+            t_mega = threading.Thread(target=self._serial_reader_mega, daemon=True)
+            t_mega.start()
+            self.reader_threads.append(t_mega)
 
         # Motor Zaman Aşımı (Watchdog) Kontrolü
         self.create_timer(0.2, self._keepalive)
 
-        self.get_logger().info(f'Hardware Bridge Düğümü Başlatıldı. Arduino Port: {self.port}')
+        self.get_logger().info(
+            f'Hardware Bridge Düğümü Başlatıldı.\n'
+            f'  - Motor Portu (Mega): {self.port}\n'
+            f'  - Pusula Portu (Uno) : {self.mag_port}'
+        )
 
-    def _connect_serial(self):
+    def _connect_serials(self):
+        # 1. Mega (Motor) Bağlantısı
         try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=0.1)
-            self.get_logger().info(f"Arduino'ya bağlandı: {self.port} ({self.baudrate} baud)")
+            self.ser_mega = serial.Serial(self.port, self.baudrate, timeout=0.1)
+            self.get_logger().info(f"Arduino Mega'ya bağlandı: {self.port} ({self.baudrate} baud)")
         except serial.SerialException as e:
-            self.get_logger().error(f"Arduino seri port bağlantı hatası: {e}")
-            self.ser = None
+            self.get_logger().error(f"Arduino Mega seri port bağlantı hatası ({self.port}): {e}")
+            self.ser_mega = None
+
+        # 2. Uno (Magnetometer) Bağlantısı
+        if self.mag_port == self.port:
+            self.ser_uno = self.ser_mega
+        else:
+            try:
+                self.ser_uno = serial.Serial(self.mag_port, self.baudrate, timeout=0.1)
+                self.get_logger().info(f"Arduino Uno'ya bağlandı: {self.mag_port} ({self.baudrate} baud)")
+            except serial.SerialException as e:
+                self.get_logger().error(f"Arduino Uno seri port bağlantı hatası ({self.mag_port}): {e}")
+                self.ser_uno = None
 
     # ==================================================
-    # MOTOR KOMUTLARI (ROS 2 Twist -> Arduino engine.ino)
+    # MOTOR KOMUTLARI (ROS 2 Twist -> Arduino Mega engine.ino)
     # ==================================================
     def _cmd_callback(self, msg: Twist):
-        if not self.ser:
+        if not self.ser_mega:
             return
 
         v = msg.linear.x
@@ -101,22 +126,22 @@ class HardwareBridgeNode(Node):
             self._send_raw(cmd)
             self.last_cmd = cmd
             self.last_cmd_time = time.time()
-            self.get_logger().info(f"Arduino Komutu: {cmd}")
+            self.get_logger().info(f"Arduino Mega Motor Komutu: {cmd}")
         else:
             self.last_cmd_time = time.time()
 
     def _led_callback(self, msg: String):
-        if self.ser:
+        if self.ser_mega:
             mode_cmd = f"LED:{msg.data.upper()}"
             self._send_raw(mode_cmd)
 
     def _send_raw(self, cmd: str):
         try:
             with self.serial_lock:
-                if self.ser and self.ser.is_open:
-                    self.ser.write((cmd + "\n").encode('utf-8'))
+                if self.ser_mega and self.ser_mega.is_open:
+                    self.ser_mega.write((cmd + "\n").encode('utf-8'))
         except Exception as e:
-            self.get_logger().error(f"Seri port yazma hatası: {e}")
+            self.get_logger().error(f"Arduino Mega seri yazma hatası: {e}")
 
     def _keepalive(self):
         if self.last_cmd and self.last_cmd != "dur":
@@ -126,33 +151,49 @@ class HardwareBridgeNode(Node):
                 self.get_logger().warn("Motor komutu zaman aşımı! Araç durduruldu.")
 
     # ==================================================
-    # SERİ PORT OKUYUCU (Arduino -> Python)
+    # SERİ PORT OKUYUCULAR
     # ==================================================
-    def _serial_reader(self):
+    def _serial_reader_uno(self):
+        buf = ""
         while rclpy.ok():
-            if not self.ser or not self.ser.is_open:
+            if not self.ser_uno or not self.ser_uno.is_open:
                 time.sleep(1.0)
                 continue
 
             try:
-                waiting = self.ser.in_waiting
+                waiting = self.ser_uno.in_waiting
                 if waiting > 0:
-                    with self.serial_lock:
-                        chunk = self.ser.read(waiting).decode('ascii', errors='ignore')
-
-                    lines_to_process = []
-                    with self.buffer_lock:
-                        self.serial_buffer += chunk
-                        while '\n' in self.serial_buffer:
-                            line, self.serial_buffer = self.serial_buffer.split('\n', 1)
-                            lines_to_process.append(line.strip())
-
-                    for line in lines_to_process:
-                        self._parse_arduino_line(line)
+                    chunk = self.ser_uno.read(waiting).decode('ascii', errors='ignore')
+                    buf += chunk
+                    while '\n' in buf:
+                        line, buf = buf.split('\n', 1)
+                        self._parse_arduino_line(line.strip())
                 else:
                     time.sleep(0.02)
             except Exception as e:
-                self.get_logger().error(f"Seri okuma hatası: {e}")
+                self.get_logger().error(f"Arduino Uno seri okuma hatası: {e}")
+                time.sleep(0.5)
+
+    def _serial_reader_mega(self):
+        buf = ""
+        while rclpy.ok():
+            if not self.ser_mega or not self.ser_mega.is_open:
+                time.sleep(1.0)
+                continue
+
+            try:
+                waiting = self.ser_mega.in_waiting
+                if waiting > 0:
+                    with self.serial_lock:
+                        chunk = self.ser_mega.read(waiting).decode('ascii', errors='ignore')
+                    buf += chunk
+                    while '\n' in buf:
+                        line, buf = buf.split('\n', 1)
+                        self._parse_arduino_line(line.strip())
+                else:
+                    time.sleep(0.02)
+            except Exception as e:
+                self.get_logger().error(f"Arduino Mega seri okuma hatası: {e}")
                 time.sleep(0.5)
 
     def _parse_arduino_line(self, line: str):
@@ -169,9 +210,11 @@ class HardwareBridgeNode(Node):
                 pass
 
     def destroy_node(self):
-        if self.ser and self.ser.is_open:
+        if self.ser_mega and self.ser_mega.is_open:
             self._send_raw("dur")
-            self.ser.close()
+            self.ser_mega.close()
+        if self.ser_uno and self.ser_uno != self.ser_mega and self.ser_uno.is_open:
+            self.ser_uno.close()
         super().destroy_node()
 
 
