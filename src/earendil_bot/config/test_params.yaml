@@ -1,0 +1,52 @@
+# test_params.yaml - Earendil Bot Test ve Görev Düğümleri Parametre Konfigürasyonu
+# MRC 2026 Otonom Görev Mimarisi (Raspberry Pi 5 + Arduino + Tekli GPS + Manyetometre + Pi Kamera ArUco)
+
+# ---------------------------------------------------------
+# Magnetometer Açı Dönüş Test Düğümü (heading_test)
+# ---------------------------------------------------------
+heading_test:
+  ros__parameters:
+    target_heading: 0.0              # Hedef mutlak pusula açısı [derece] (0.0 - 360.0)
+    heading_tolerance_deg: 7.0       # Açısal tolerans [derece]
+    turn_speed: 0.5                  # Maksimum açısal dönüş hızı [rad/s]
+    kp_angular: 2.0                  # Dönüş hızı P katsayısı
+    invert_turn: false               # Dönüş yönünü tersleme bayrağı
+    dry_run: false                   # Simülasyon modu (Motor hızları gönderilmez)
+
+# ---------------------------------------------------------
+# Basit Tek Nokta GPS Test Düğümü (gps_nav_test)
+# ---------------------------------------------------------
+gps_nav_test:
+  ros__parameters:
+    target_lat: 39.9017797           # Hedef GPS enlemi (Latitude)
+    target_lon: 32.7704813           # Hedef GPS boylamı (Longitude)
+    heading_tolerance_deg: 7.0       # Yönelme açı toleransı [derece]
+    arrival_radius: 2.0              # Hedefe varış yarıçapı [metre] (2 Metre)
+    max_linear_x: 0.5                # Maksimum ileri hız [m/s]
+    max_angular_z: 1.0               # Maksimum dönüş hızı [rad/s]
+    kp_angular: 2.5                  # Yönelme P katsayısı
+    kp_lane: 1.5                     # Şerit koruma / koridor takip P katsayısı
+
+# ---------------------------------------------------------
+# Ana Otonom Navigasyon Düğümü (gps_nav_main)
+# 10 Hedef + Görsel ArUco Override + 360° Tarama
+# ---------------------------------------------------------
+gps_nav_main:
+  ros__parameters:
+    heading_tolerance_deg: 7.0       # Yönelme açı toleransı [derece]
+    gps_arrival_radius: 2.0          # GPS Hedefine varış yarıçapı [metre] (2 Metre)
+    aruco_arrival_radius: 0.5        # ArUco etiketine yaklaşma yarıçapı [metre] (50 cm)
+    max_linear_x: 0.5                # İleri maksimum hız [m/s]
+    max_angular_z: 1.0               # Dönüş maksimum hızı [rad/s]
+    kp_angular: 2.5                  # Yönelme P kazancı
+    kp_lane: 1.5                     # İlerleme şerit takip P kazancı
+    kp_aruco_steer: 0.05             # Görsel ArUco hizalama P kazancı
+    sensing_wait_time: 5.0           # Hedefte Sarı LED algılama bekleme süresi [saniye]
+
+# ---------------------------------------------------------
+# Komut Kaydı ve Rota Tersleme ile Üsse Dönüş (path_recorder)
+# ---------------------------------------------------------
+path_recorder:
+  ros__parameters:
+    heading_tolerance_deg: 7.0       # 180° dönüş hassasiyeti [derece]
+    turn_speed: 0.5                  # 180° dönüş hızı [rad/s]

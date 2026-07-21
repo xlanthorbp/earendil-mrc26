@@ -1,0 +1,44 @@
+# hardware_params.yaml
+# Earendil Bot Donanım ve Sensör Konfigürasyonları (MRC 2026 Otonom Görev)
+# Mimarisi: Raspberry Pi 5 + Arduino (Motor & Manyetometre/IMU) + Tekli GPS + Pi Kamera (ArUco)
+
+# ---------------------------------------------------------
+# Arduino Donanım Köprüsü Düğümü (hardware_bridge)
+# Motorlar, Manyetometre / Pusula (Heading), LED Mod Işıkları
+# ---------------------------------------------------------
+hardware_bridge:
+  ros__parameters:
+    port: "/dev/ttyACM0"          # Arduino Seri Port Aygıt Yolu
+    baudrate: 115200              # Seri haberleşme hızı
+    wheel_radius: 0.033           # Tekerlek yarıçapı [metre]
+    wheel_separation: 0.160       # İki tekerlek arası mesafe [metre]
+    ticks_per_rev: 341.2          # Enkoder pulse/tick sayısı
+    heading_offset: 0.0           # Pusula sapma açısı ofseti [derece]
+    min_pwm: 60                   # Motor minimum PWM eşiği
+    max_pwm: 255                  # Motor maksimum PWM hızı
+    use_gpstest_commands: true    # Arduino komut yapısı bayrağı
+    sensor_watchdog_timeout: 2.0  # Sensör zaman aşımı [saniye]
+    motor_watchdog_timeout: 1.0   # Motor komut zaman aşımı [saniye]
+
+# ---------------------------------------------------------
+# Tekli GPS Düğümü (gps_node / rover_gps)
+# Standart NMEA Seri Bağlantı
+# ---------------------------------------------------------
+gps_node:
+  ros__parameters:
+    gps_port: "/dev/ttyUSB0"      # GPS alıcısının seri portu
+    gps_baud: 115200              # GPS seri port baud hızı
+    min_pwm: 60                   # Otonom sürüş minimum PWM hızı
+    max_pwm: 90                   # Otonom sürüş maksimum PWM hızı
+    target_pwm: 80                # Hedef otonom seyir PWM hızı
+    cmd_vel_topic: "/cmd_vel"     # Motor komut konusu
+    map_link_print_interval: 3.0  # Harita bağlantısı yazdırma aralığı
+
+# ---------------------------------------------------------
+# ArUco Etiket Algılama Düğümü (Pi 5 Kamera)
+# ---------------------------------------------------------
+aruco_detector:
+  ros__parameters:
+    camera_id: 0                  # Raspberry Pi 5 / USB Kamera indeksi
+    dictionary: "5X5_100"         # MRC 2026 Şartnamesi: 5x5_100 ArUco kütüphanesi
+    marker_size_m: 0.20           # MRC 2026 Şartnamesi: 20x20 cm karton etiket boyutu
