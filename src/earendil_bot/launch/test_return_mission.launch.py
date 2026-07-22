@@ -65,20 +65,12 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # 4. GPS Test Navigasyon Düğümü (2 Hedefli)
+        # 4. Zamanlı Test Navigasyon Düğümü (5s ileri, 2s sağ, 2s ileri, 1s sağ -> 180° Dönüş & Üsse Geri)
         Node(
             package='earendil_bot',
-            executable='gps_nav_test',
-            name='gps_nav_test',
-            parameters=[
-                test_params,
-                {
-                    'target_lat': LaunchConfiguration('target_lat'),
-                    'target_lon': LaunchConfiguration('target_lon'),
-                    'target2_lat': LaunchConfiguration('target2_lat'),
-                    'target2_lon': LaunchConfiguration('target2_lon'),
-                }
-            ],
+            executable='timed_nav_test',
+            name='timed_nav_test',
+            parameters=[test_params],
             output='screen'
         ),
     ])
