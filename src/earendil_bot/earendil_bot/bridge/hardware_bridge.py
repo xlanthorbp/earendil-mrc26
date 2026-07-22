@@ -34,8 +34,9 @@ class HardwareBridgeNode(Node):
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('heading_offset', 0.0)
         self.declare_parameter('motor_watchdog_timeout', 1.0)
-        self.declare_parameter('min_pwm', 80)
-        self.declare_parameter('max_pwm', 200)
+        self.declare_parameter('min_pwm', 60)
+        self.declare_parameter('max_pwm', 90)
+        self.declare_parameter('target_pwm', 80)
 
         self.port = self.get_parameter('port').value
         self.mag_port = self.get_parameter('mag_port').value
@@ -44,6 +45,7 @@ class HardwareBridgeNode(Node):
         self.motor_watchdog_timeout = self.get_parameter('motor_watchdog_timeout').value
         self.min_pwm = self.get_parameter('min_pwm').value
         self.max_pwm = self.get_parameter('max_pwm').value
+        self.target_pwm = self.get_parameter('target_pwm').value
 
         # Durum Değişkenleri
         self.last_cmd = "MOTOR:STOP"
@@ -79,7 +81,8 @@ class HardwareBridgeNode(Node):
         self.get_logger().info(
             f'Hardware Bridge Düğümü Başlatıldı.\n'
             f'  - Motor Portu (Mega): {self.port}\n'
-            f'  - Pusula Portu (Uno) : {self.mag_port}'
+            f'  - Pusula Portu (Uno) : {self.mag_port}\n'
+            f'  - Hedef PWM: {self.target_pwm}'
         )
 
     def _connect_serials(self):
@@ -117,12 +120,14 @@ class HardwareBridgeNode(Node):
 
         # Dönüş komutu (Açısal hız z)
         if abs(w) > 0.05:
-            pwm = self.max_pwm if abs(w) > 0.4 else self.min_pwm
+            scale = min(1.0, abs(w) / 0.5)
+            pwm = int(self.min_pwm + scale * (self.target_pwm - self.min_pwm))
             cmd = f"MOTOR:LEFT:{pwm}" if w > 0 else f"MOTOR:RIGHT:{pwm}"
 
         # İleri / Geri komutu (Çizgisel hız x)
         elif abs(v) > 0.05:
-            pwm = self.max_pwm if abs(v) > 0.4 else self.min_pwm
+            scale = min(1.0, abs(v) / 0.5)
+            pwm = int(self.min_pwm + scale * (self.target_pwm - self.min_pwm))
             cmd = f"MOTOR:FWD:{pwm}" if v > 0 else f"MOTOR:BACK:{pwm}"
 
         else:
