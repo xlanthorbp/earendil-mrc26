@@ -15,12 +15,14 @@ hardware_bridge:
     wheel_separation: 0.160       # İki tekerlek arası mesafe [metre]
     ticks_per_rev: 341.2          # Enkoder pulse/tick sayısı
     heading_offset: 0.0           # Pusula sapma açısı ofseti [derece]
-    min_pwm: 60                   # Motor minimum PWM eşiği
-    max_pwm: 90                   # Motor maksimum PWM hızı
+    min_pwm: 80                   # Motor minimum PWM eşiği
+    max_pwm: 80                   # Motor maksimum PWM hızı
     target_pwm: 80                # Hedef çalışma PWM hızı (MOTOR:FWD:80)
     use_gpstest_commands: true    # Arduino komut yapısı bayrağı
     sensor_watchdog_timeout: 2.0  # Sensör zaman aşımı [saniye]
     motor_watchdog_timeout: 1.0   # Motor komut zaman aşımı [saniye]
+    motor_cmd_topic: "/motor/command" # Motor ham string komut konusu
+    arduino_reset_wait_s: 2.0     # Arduino Mega DTR reset bekleme süresi [saniye]
 
 # ---------------------------------------------------------
 # Tekli GPS Düğümü (gps_node / rover_gps)

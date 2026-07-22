@@ -21,7 +21,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, String, Int32, Bool
-from geometry_msgs.msg import Twist, Point
+from geometry_msgs.msg import Point
 import math
 import time
 import csv
@@ -90,7 +90,7 @@ class GpsNavMainNode(Node):
         self.aligned = False
 
         # Yayıncılar & Aboneler
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(String, '/motor/command', 10)
         self.led_pub = self.create_publisher(String, '/mode/led', 10)
         self.status_pub = self.create_publisher(String, '/mission/status', 10)
 
@@ -164,24 +164,24 @@ class GpsNavMainNode(Node):
         self.status_pub.publish(msg)
 
     def control_loop(self):
-        cmd = Twist()
+        cmd = String()
 
         if self.state == "MISSION_COMPLETED":
             self.set_led_mode("GREEN")
             self.publish_status("COMPLETED")
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         self.publish_status("IN_PROGRESS")
 
         if self.mag_heading is None or (time.time() - self.last_mag_time > 2.0):
             self.get_logger().warn("Pusula verisi bekleniyor (/mag/heading)...", throttle_duration_sec=3.0)
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         if self.current_lat is None or (time.time() - self.last_gps_time > 2.0):
             self.get_logger().warn("GPS verisi bekleniyor (/gps/fix)...", throttle_duration_sec=3.0)
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         seq, target_lat, target_lon = self.waypoints[self.current_wp_index]
@@ -204,17 +204,17 @@ class GpsNavMainNode(Node):
             # ArUco etiketine 50 cm yaklaşıldı mı?
             if self.aruco_dist_m <= self.aruco_arrival_radius:
                 self.get_logger().info(f"🎯 ARUCO ETİKETİNE 50 CM ULAŞILDI! ID={self.aruco_id}")
-                self.stop_robot(cmd)
+                self.stop_robot()
                 self.save_waypoint_record(detection_type="VISUAL_OVERRIDE")
                 self.state = "SENSING_RECORD"
                 self.sensing_start_time = time.time()
                 return
 
             # Kamera ile hizalanıp etikete doğru sürüş
-            angular_vel = self.kp_aruco_steer * self.aruco_angle_deg
-            angular_vel = max(-self.max_angular_z, min(self.max_angular_z, angular_vel))
-            cmd.linear.x = self.max_linear_x * 0.7
-            cmd.angular.z = angular_vel
+            if abs(self.aruco_angle_deg) > 5.0:
+                cmd.data = "MOTOR:LEFT:80" if self.aruco_angle_deg > 0 else "MOTOR:RIGHT:80"
+            else:
+                cmd.data = "MOTOR:FWD:80"
             self.cmd_pub.publish(cmd)
             return
 
@@ -231,8 +231,7 @@ class GpsNavMainNode(Node):
 
             elapsed_scan = time.time() - self.scan_360_start_time
             if elapsed_scan < 12.0:  # ~360° dönüş
-                cmd.linear.x = 0.0
-                cmd.angular.z = 0.5
+                cmd.data = "MOTOR:LEFT:80"
                 self.cmd_pub.publish(cmd)
             else:
                 self.get_logger().warn(f"WP #{seq} için 360° taramada ArUco bulunamadı. GPS konumu kaydediliyor.")
@@ -246,7 +245,7 @@ class GpsNavMainNode(Node):
         # ---------------------------------------------------------
         if self.state == "SENSING_RECORD":
             self.set_led_mode("YELLOW")
-            self.stop_robot(cmd)
+            self.stop_robot()
 
             if time.time() - self.sensing_start_time >= self.sensing_wait_time:
                 self.current_wp_index += 1
@@ -267,7 +266,7 @@ class GpsNavMainNode(Node):
         # GPS Hedefine 2 Metre yaklaşıldı mı?
         if distance_to_gps <= self.gps_arrival_radius:
             self.get_logger().info(f"GPS HEDEFİNE 2 METRE YAKLAŞILDI! Waypoint #{seq}. 360° ArUco Taraması Başlatılıyor...")
-            self.stop_robot(cmd)
+            self.stop_robot()
             self.state = "SCANNING_360"
             self.scan_360_start_time = time.time()
             return
@@ -278,10 +277,7 @@ class GpsNavMainNode(Node):
         # Dönüş / Yönelme
         if not self.aligned:
             if abs(error) > self.heading_tol:
-                angular_vel = self.kp_angular * error
-                angular_vel = max(-self.max_angular_z, min(self.max_angular_z, angular_vel))
-                cmd.linear.x = 0.0
-                cmd.angular.z = angular_vel
+                cmd.data = "MOTOR:LEFT:80" if error > 0 else "MOTOR:RIGHT:80"
             else:
                 self.aligned = True
 
@@ -289,16 +285,15 @@ class GpsNavMainNode(Node):
         if self.aligned:
             if abs(error) > self.heading_tol * 3:
                 self.aligned = False
+                cmd.data = "MOTOR:LEFT:80" if error > 0 else "MOTOR:RIGHT:80"
             else:
-                cmd.linear.x = self.max_linear_x
-                cmd.angular.z = self.kp_lane * error
-                cmd.angular.z = max(-self.max_angular_z, min(self.max_angular_z, cmd.angular.z))
+                cmd.data = "MOTOR:FWD:80"
 
         self.cmd_pub.publish(cmd)
 
-    def stop_robot(self, cmd: Twist):
-        cmd.linear.x = 0.0
-        cmd.angular.z = 0.0
+    def stop_robot(self):
+        cmd = String()
+        cmd.data = "MOTOR:STOP"
         self.cmd_pub.publish(cmd)
 
 

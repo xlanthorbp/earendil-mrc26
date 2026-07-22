@@ -13,8 +13,7 @@ Usage:
 """
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32
-from geometry_msgs.msg import Twist
+from std_msgs.msg import Float32, String
 import math
 import time
 from earendil_bot.gps.gps_math import angle_error_rad, normalize_heading_deg
@@ -26,12 +25,10 @@ class HeadingTest(Node):
 
         # Target Angle Parameter (degrees: 0.0 - 360.0)
         self.declare_parameter('target_heading', 0.0)
-
         self.declare_parameter('heading_tolerance_deg', 8.5) # degrees
-        self.declare_parameter('turn_speed', 0.5)            # rad/s
-        self.declare_parameter('kp_angular', 2.0)            # P-gain for rotation
         self.declare_parameter('invert_turn', False)
         self.declare_parameter('dry_run', False)
+        self.declare_parameter('motor_cmd_topic', '/motor/command')
 
         target_heading_param = self.get_parameter('target_heading').value
         target_heading_normalized = normalize_heading_deg(target_heading_param)
@@ -39,10 +36,9 @@ class HeadingTest(Node):
 
         heading_tol_deg = self.get_parameter('heading_tolerance_deg').value
         self.heading_tol = math.radians(heading_tol_deg)
-        self.turn_speed = self.get_parameter('turn_speed').value
-        self.kp_angular = self.get_parameter('kp_angular').value
         self.invert_turn = self.get_parameter('invert_turn').value
         self.dry_run = self.get_parameter('dry_run').value
+        self.cmd_topic = self.get_parameter('motor_cmd_topic').value
 
         self.get_logger().info(f"Target Heading Set To: {target_heading_normalized:.1f}°")
         self.get_logger().info(f"Tolerance: {heading_tol_deg:.1f}°")
@@ -53,7 +49,7 @@ class HeadingTest(Node):
         self.last_mag_time = 0.0
 
         # Publisher & Subscriber
-        self.pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.pub = self.create_publisher(String, self.cmd_topic, 10)
         self.create_subscription(Float32, '/mag/heading', self.mag_cb, 10)
 
         # Control loop 10 Hz
@@ -65,12 +61,11 @@ class HeadingTest(Node):
         self.last_mag_time = time.time()
 
     def control_loop(self):
-        cmd = Twist()
+        cmd = String()
 
         if self.mag_heading is None or (time.time() - self.last_mag_time > 1.0):
             self.get_logger().warn("Magnetometer Watchdog triggered! Sensor lost or waiting.", throttle_duration_sec=3.0)
-            cmd.linear.x = 0.0
-            cmd.angular.z = 0.0
+            cmd.data = "MOTOR:STOP"
             self.pub.publish(cmd)
             return
 
@@ -85,23 +80,17 @@ class HeadingTest(Node):
         )
 
         if abs(error) > self.heading_tol:
-            # P-Controller logic
-            angular_vel = self.kp_angular * error
-            if angular_vel > self.turn_speed: angular_vel = self.turn_speed
-            elif angular_vel < -self.turn_speed: angular_vel = -self.turn_speed
-            cmd.angular.z = angular_vel
+            turn_left = error > 0
+            if self.invert_turn:
+                turn_left = not turn_left
+            cmd.data = "MOTOR:LEFT:80" if turn_left else "MOTOR:RIGHT:80"
         else:
             self.get_logger().info("ALIGNED WITH TARGET HEADING!", throttle_duration_sec=1.0)
-            cmd.angular.z = 0.0
-
-        if self.invert_turn:
-            cmd.angular.z = -cmd.angular.z
+            cmd.data = "MOTOR:STOP"
 
         if self.dry_run:
-            cmd.angular.z = 0.0
-            cmd.linear.x = 0.0
+            cmd.data = "MOTOR:STOP"
 
-        cmd.linear.x = 0.0
         self.pub.publish(cmd)
 
 
@@ -114,9 +103,8 @@ def main(args=None):
         pass
     finally:
         # Publish stop command
-        cmd = Twist()
-        cmd.linear.x = 0.0
-        cmd.angular.z = 0.0
+        cmd = String()
+        cmd.data = "MOTOR:STOP"
         node.pub.publish(cmd)
 
         node.destroy_node()

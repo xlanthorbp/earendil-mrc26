@@ -22,6 +22,19 @@ def angle_error_deg(target_deg: float, current_deg: float) -> float:
 
     return error
 
+def shortest_angular_error_deg(target_deg: float, current_deg: float) -> float:
+    """Return signed target-current error in [-180, 180)."""
+    return (target_deg - current_deg + 180.0) % 360.0 - 180.0
+
+def circular_mean_deg(headings_deg) -> float:
+    """Computes vector-based circular mean heading in degrees (0-360)."""
+    headings = list(headings_deg)
+    if not headings:
+        raise ValueError("At least one heading is required")
+    sin_sum = sum(math.sin(math.radians(v)) for v in headings)
+    cos_sum = sum(math.cos(math.radians(v)) for v in headings)
+    return normalize_heading_deg(math.degrees(math.atan2(sin_sum, cos_sum)))
+
 def angle_error_rad(target_rad: float, current_rad: float) -> float:
     """
     Result is between -PI and +PI.

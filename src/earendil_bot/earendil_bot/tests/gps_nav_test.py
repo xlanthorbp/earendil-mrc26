@@ -22,7 +22,6 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, String
-from geometry_msgs.msg import Twist
 import math
 import time
 from earendil_bot.gps.gps_math import bearing_between_gps_rad, haversine, angle_error_rad
@@ -79,7 +78,7 @@ class SimpleGpsNavTest(Node):
         self.arrived = False
 
         # Yayıncılar & Aboneler
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(String, '/motor/command', 10)
         self.status_pub = self.create_publisher(String, '/mission/status', 10)
         self.create_subscription(Float32, '/mag/heading', self.mag_cb, 10)
         self.create_subscription(NavSatFix, '/gps/fix', self.gps_cb, 10)
@@ -106,11 +105,11 @@ class SimpleGpsNavTest(Node):
         self.status_pub.publish(msg)
 
     def control_loop(self):
-        cmd = Twist()
+        cmd = String()
 
         if self.arrived:
             self.publish_status("COMPLETED")
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         self.publish_status("IN_PROGRESS")
@@ -121,12 +120,12 @@ class SimpleGpsNavTest(Node):
 
         if self.mag_heading is None or (time.time() - self.last_mag_time > 2.0):
             self.get_logger().warn("Pusula verisi bekleniyor (/mag/heading)...", throttle_duration_sec=3.0)
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         if self.current_lat is None or (time.time() - self.last_gps_time > 2.0):
             self.get_logger().warn("GPS verisi bekleniyor (/gps/fix)...", throttle_duration_sec=3.0)
-            self.stop_robot(cmd)
+            self.stop_robot()
             return
 
         target_lat, target_lon = self.targets[self.current_target_index]
@@ -136,7 +135,7 @@ class SimpleGpsNavTest(Node):
         # Hedefe Varış Kontrolü (2 Metre)
         if distance <= self.arrival_radius:
             self.get_logger().info(f"🎯 HEDEF #{self.current_target_index + 1} ULAŞILDI! Kalan Mesafe: {distance:.2f}m")
-            self.stop_robot(cmd)
+            self.stop_robot()
             
             self.current_target_index += 1
             if self.current_target_index >= len(self.targets):
@@ -160,10 +159,7 @@ class SimpleGpsNavTest(Node):
         # 1. Aşama: Hedefe Yönelme / Hizalama
         if not self.aligned:
             if abs(error) > self.heading_tol:
-                angular_vel = self.kp_angular * error
-                angular_vel = max(-self.max_angular_z, min(self.max_angular_z, angular_vel))
-                cmd.linear.x = 0.0
-                cmd.angular.z = angular_vel
+                cmd.data = "MOTOR:LEFT:80" if error > 0 else "MOTOR:RIGHT:80"
             else:
                 self.aligned = True
                 self.get_logger().info(f"Hedef #{self.current_target_index + 1} için açı hizalandı! İleri sürüşe geçiliyor.")
@@ -173,16 +169,15 @@ class SimpleGpsNavTest(Node):
             if abs(error) > self.heading_tol * 3:
                 self.aligned = False
                 self.get_logger().info("Hizalama bozuldu! Yeniden yöneliniyor.")
+                cmd.data = "MOTOR:LEFT:80" if error > 0 else "MOTOR:RIGHT:80"
             else:
-                cmd.linear.x = self.max_linear_x
-                cmd.angular.z = self.kp_lane * error
-                cmd.angular.z = max(-self.max_angular_z, min(self.max_angular_z, cmd.angular.z))
+                cmd.data = "MOTOR:FWD:80"
 
         self.cmd_pub.publish(cmd)
 
-    def stop_robot(self, cmd: Twist):
-        cmd.linear.x = 0.0
-        cmd.angular.z = 0.0
+    def stop_robot(self):
+        cmd = String()
+        cmd.data = "MOTOR:STOP"
         self.cmd_pub.publish(cmd)
 
 

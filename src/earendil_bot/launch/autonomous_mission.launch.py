@@ -5,7 +5,8 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('earendil_bot')
-    params_file = os.path.join(pkg_share, 'config', 'hardware_params.yaml')
+    hardware_params = os.path.join(pkg_share, 'config', 'hardware_params.yaml')
+    test_params = os.path.join(pkg_share, 'config', 'test_params.yaml')
 
     return LaunchDescription([
         # 1. Arduino Hardware Bridge Node (Motorlar, Manyetometre, LED Mod Işıkları)
@@ -13,7 +14,7 @@ def generate_launch_description():
             package='earendil_bot',
             executable='hardware_bridge',
             name='hardware_bridge',
-            parameters=[params_file],
+            parameters=[hardware_params],
             output='screen'
         ),
 
@@ -22,7 +23,7 @@ def generate_launch_description():
             package='earendil_bot',
             executable='gps_node',
             name='gps_node',
-            parameters=[params_file],
+            parameters=[hardware_params],
             output='screen'
         ),
 
@@ -31,7 +32,7 @@ def generate_launch_description():
             package='earendil_bot',
             executable='aruco_detector',
             name='aruco_detector',
-            parameters=[params_file],
+            parameters=[hardware_params],
             output='screen'
         ),
 
@@ -40,7 +41,7 @@ def generate_launch_description():
             package='earendil_bot',
             executable='gps_nav_main',
             name='gps_nav_main',
-            parameters=[params_file],
+            parameters=[test_params],
             output='screen'
         ),
 
@@ -49,7 +50,7 @@ def generate_launch_description():
             package='earendil_bot',
             executable='path_recorder',
             name='path_recorder',
-            parameters=[params_file],
+            parameters=[test_params],
             output='screen'
         ),
     ])

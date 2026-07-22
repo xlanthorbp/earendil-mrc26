@@ -3,16 +3,17 @@
 Hardware Bridge Node for Earendil Bot (MRC 2026)
 Raspberry Pi 5 -> Arduino Mega (engine.ino) & Arduino Uno (magnetometer.ino)
 ---------------------------------------------------------------------------
-1. /cmd_vel (Twist) mesajlarını Arduino Mega'ya (engine.ino) iletir:
-   - ileri_hizli / ileri_yavas
-   - geri_hizli / geri_yavas
-   - sag_hizli / sag_yavas
-   - sol_hizli / sol_yavas
-   - dur
+1. /motor/command (String) mesajlarını Arduino Mega'ya (engine.ino) iletir:
+   - MOTOR:FWD:80
+   - MOTOR:BACK:80
+   - MOTOR:LEFT:80
+   - MOTOR:RIGHT:80
+   - MOTOR:STOP
 2. Arduino Uno'dan (magnetometer.ino) gelen sensör verilerini (Manyetometre / Heading) okur.
 """
 
 import math
+import re
 import time
 import threading
 
@@ -20,8 +21,9 @@ import rclpy
 from rclpy.node import Node
 import serial
 
-from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32, String
+
+VALID_CMD_REGEX = re.compile(r"^MOTOR:(FWD|BACK|LEFT|RIGHT):\d{1,3}$")
 
 
 class HardwareBridgeNode(Node):
@@ -34,18 +36,16 @@ class HardwareBridgeNode(Node):
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('heading_offset', 0.0)
         self.declare_parameter('motor_watchdog_timeout', 1.0)
-        self.declare_parameter('min_pwm', 60)
-        self.declare_parameter('max_pwm', 90)
-        self.declare_parameter('target_pwm', 80)
+        self.declare_parameter('motor_cmd_topic', '/motor/command')
+        self.declare_parameter('arduino_reset_wait_s', 2.0)
 
         self.port = self.get_parameter('port').value
         self.mag_port = self.get_parameter('mag_port').value
         self.baudrate = self.get_parameter('baudrate').value
         self.heading_offset = self.get_parameter('heading_offset').value
         self.motor_watchdog_timeout = self.get_parameter('motor_watchdog_timeout').value
-        self.min_pwm = self.get_parameter('min_pwm').value
-        self.max_pwm = self.get_parameter('max_pwm').value
-        self.target_pwm = self.get_parameter('target_pwm').value
+        self.cmd_topic = self.get_parameter('motor_cmd_topic').value
+        self.reset_wait = self.get_parameter('arduino_reset_wait_s').value
 
         # Durum Değişkenleri
         self.last_cmd = "MOTOR:STOP"
@@ -59,7 +59,7 @@ class HardwareBridgeNode(Node):
         self._connect_serials()
 
         # ROS 2 Yayıncı & Aboneler
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self._cmd_callback, 10)
+        self.cmd_sub = self.create_subscription(String, self.cmd_topic, self._cmd_callback, 10)
         self.led_sub = self.create_subscription(String, '/mode/led', self._led_callback, 10)
         self.mag_pub = self.create_publisher(Float32, '/mag/heading', 10)
 
@@ -82,55 +82,51 @@ class HardwareBridgeNode(Node):
             f'Hardware Bridge Düğümü Başlatıldı.\n'
             f'  - Motor Portu (Mega): {self.port}\n'
             f'  - Pusula Portu (Uno) : {self.mag_port}\n'
-            f'  - Hedef PWM: {self.target_pwm}'
+            f'  - Motor Komut Konusu: {self.cmd_topic}'
         )
 
     def _connect_serials(self):
         # 1. Mega (Motor) Bağlantısı
-        try:
-            self.ser_mega = serial.Serial(self.port, self.baudrate, timeout=0.1)
-            self.get_logger().info(f"Arduino Mega'ya bağlandı: {self.port} ({self.baudrate} baud)")
-        except serial.SerialException as e:
-            self.get_logger().error(f"Arduino Mega seri port bağlantı hatası ({self.port}): {e}")
-            self.ser_mega = None
+        if not self.ser_mega or not self.ser_mega.is_open:
+            try:
+                self.ser_mega = serial.Serial(self.port, self.baudrate, timeout=0.1, exclusive=True)
+                self.get_logger().info(f"Arduino Mega seri portu açıldı ({self.port}). Reset bekleniyor ({self.reset_wait}s)...")
+                time.sleep(self.reset_wait)
+                if hasattr(self.ser_mega, 'reset_input_buffer'):
+                    self.ser_mega.reset_input_buffer()
+                self._send_raw("MOTOR:STOP")
+                self.get_logger().info(f"Arduino Mega'ya başarıyla bağlandı: {self.port}")
+            except (serial.SerialException, OSError) as e:
+                self.get_logger().error(f"Arduino Mega seri port bağlantı hatası ({self.port}): {e}")
+                self.ser_mega = None
 
         # 2. Uno (Magnetometer) Bağlantısı
         if self.mag_port == self.port:
             self.ser_uno = self.ser_mega
-        else:
+        elif not self.ser_uno or not self.ser_uno.is_open:
             try:
                 self.ser_uno = serial.Serial(self.mag_port, self.baudrate, timeout=0.1)
                 self.get_logger().info(f"Arduino Uno'ya bağlandı: {self.mag_port} ({self.baudrate} baud)")
-            except serial.SerialException as e:
+            except (serial.SerialException, OSError) as e:
                 self.get_logger().error(f"Arduino Uno seri port bağlantı hatası ({self.mag_port}): {e}")
                 self.ser_uno = None
 
     # ==================================================
-    # MOTOR KOMUTLARI (ROS 2 Twist -> Arduino Mega engine.ino)
-    # Yeni Protokol: MOTOR:FWD:PWM, MOTOR:BACK:PWM, MOTOR:LEFT:PWM, MOTOR:RIGHT:PWM, MOTOR:STOP
+    # MOTOR KOMUTLARI (ROS 2 String -> Arduino Mega engine.ino)
+    # Protokol: MOTOR:FWD:80, MOTOR:BACK:80, MOTOR:LEFT:80, MOTOR:RIGHT:80, MOTOR:STOP
     # ==================================================
-    def _cmd_callback(self, msg: Twist):
-        if not self.ser_mega:
+    def _cmd_callback(self, msg: String):
+        if not self.ser_mega or not self.ser_mega.is_open:
+            self.get_logger().warn(
+                f"Arduino Mega seri portu ({self.port}) bağlı değil! Komut işlenemedi.",
+                throttle_duration_sec=3.0
+            )
             return
 
-        v = msg.linear.x
-        w = msg.angular.z
+        cmd = msg.data.strip().upper()
 
-        cmd = "MOTOR:STOP"
-
-        # Dönüş komutu (Açısal hız z)
-        if abs(w) > 0.05:
-            scale = min(1.0, abs(w) / 0.5)
-            pwm = int(self.min_pwm + scale * (self.target_pwm - self.min_pwm))
-            cmd = f"MOTOR:LEFT:{pwm}" if w > 0 else f"MOTOR:RIGHT:{pwm}"
-
-        # İleri / Geri komutu (Çizgisel hız x)
-        elif abs(v) > 0.05:
-            scale = min(1.0, abs(v) / 0.5)
-            pwm = int(self.min_pwm + scale * (self.target_pwm - self.min_pwm))
-            cmd = f"MOTOR:FWD:{pwm}" if v > 0 else f"MOTOR:BACK:{pwm}"
-
-        else:
+        if cmd != "MOTOR:STOP" and not VALID_CMD_REGEX.match(cmd):
+            self.get_logger().error(f"Geçersiz motor komutu reddedildi: {cmd}")
             cmd = "MOTOR:STOP"
 
         now = time.time()
@@ -148,7 +144,7 @@ class HardwareBridgeNode(Node):
             self.last_sent_time = now
 
     def _led_callback(self, msg: String):
-        if self.ser_mega:
+        if self.ser_mega and self.ser_mega.is_open:
             mode_cmd = f"LED:{msg.data.upper()}"
             self._send_raw(mode_cmd)
 
@@ -157,11 +153,17 @@ class HardwareBridgeNode(Node):
             with self.serial_lock:
                 if self.ser_mega and self.ser_mega.is_open:
                     self.ser_mega.write((cmd + "\n").encode('utf-8'))
+                    self.ser_mega.flush()
         except Exception as e:
             self.get_logger().error(f"Arduino Mega seri yazma hatası: {e}")
 
     def _keepalive(self):
         now = time.time()
+
+        # Seri bağlantı kesildiyse otomatik yeniden bağlanmayı dene
+        if not self.ser_mega or not self.ser_mega.is_open:
+            self._connect_serials()
+
         if self.last_cmd and self.last_cmd != "MOTOR:STOP":
             if now - self.last_cmd_time > self.motor_watchdog_timeout:
                 self.last_cmd = "MOTOR:STOP"

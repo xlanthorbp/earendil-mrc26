@@ -50,5 +50,8 @@ gps_nav_main:
 # ---------------------------------------------------------
 path_recorder:
   ros__parameters:
-    heading_tolerance_deg: 7.0       # 180° dönüş hassasiyeti [derece]
-    turn_speed: 0.5                  # 180° dönüş hızı [rad/s]
+    heading_tolerance_deg: 7.5       # 180° dönüş hassasiyeti [derece]
+    turn_initial_settle_s: 0.4       # 180° dönüş öncesi sönümlenme süresi [saniye]
+    turn_required_samples: 3         # Tolerans içi ardışık doğrulama örnek sayısı
+    post_turn_pause_s: 0.5           # Dönüş sonrası ters rotaya geçmeden önceki duraklama süresi [saniye]
+    route_log_path: "~/.ros/earendil_bot/last_route.json" # Rota JSON kayıt adresi
