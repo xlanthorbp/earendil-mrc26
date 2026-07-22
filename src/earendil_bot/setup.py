@@ -34,7 +34,7 @@ setup(
             'gps_nav_main = earendil_bot.scripts.gps_nav_main:main',
             'path_recorder = earendil_bot.scripts.path_recorder:main',
             'gps_nav_test = earendil_bot.tests.gps_nav_test:main',
-            'timed_nav_test = earendil_bot.scripts.timed_nav_test:main',
+            'timed_nav_test = earendil_bot.tests.timed_nav_test:main',
             'heading_test = earendil_bot.tests.heading_test:main',
             'hardware_check = earendil_bot.hardware_check:main',
         ],
