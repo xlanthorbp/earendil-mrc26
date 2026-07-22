@@ -34,16 +34,21 @@ class HardwareBridgeNode(Node):
         self.declare_parameter('baudrate', 115200)
         self.declare_parameter('heading_offset', 0.0)
         self.declare_parameter('motor_watchdog_timeout', 1.0)
+        self.declare_parameter('min_pwm', 80)
+        self.declare_parameter('max_pwm', 200)
 
         self.port = self.get_parameter('port').value
         self.mag_port = self.get_parameter('mag_port').value
         self.baudrate = self.get_parameter('baudrate').value
         self.heading_offset = self.get_parameter('heading_offset').value
         self.motor_watchdog_timeout = self.get_parameter('motor_watchdog_timeout').value
+        self.min_pwm = self.get_parameter('min_pwm').value
+        self.max_pwm = self.get_parameter('max_pwm').value
 
         # Durum Değişkenleri
-        self.last_cmd = "dur"
+        self.last_cmd = "MOTOR:STOP"
         self.last_cmd_time = time.time()
+        self.last_sent_time = 0.0
         self.serial_lock = threading.Lock()
 
         # Seri Bağlantılar
@@ -99,6 +104,7 @@ class HardwareBridgeNode(Node):
 
     # ==================================================
     # MOTOR KOMUTLARI (ROS 2 Twist -> Arduino Mega engine.ino)
+    # Yeni Protokol: MOTOR:FWD:PWM, MOTOR:BACK:PWM, MOTOR:LEFT:PWM, MOTOR:RIGHT:PWM, MOTOR:STOP
     # ==================================================
     def _cmd_callback(self, msg: Twist):
         if not self.ser_mega:
@@ -107,28 +113,34 @@ class HardwareBridgeNode(Node):
         v = msg.linear.x
         w = msg.angular.z
 
-        cmd = "dur"
+        cmd = "MOTOR:STOP"
 
         # Dönüş komutu (Açısal hız z)
         if abs(w) > 0.05:
-            suffix = "hizli" if abs(w) > 0.4 else "yavas"
-            cmd = f"sol_{suffix}" if w > 0 else f"sag_{suffix}"
+            pwm = self.max_pwm if abs(w) > 0.4 else self.min_pwm
+            cmd = f"MOTOR:LEFT:{pwm}" if w > 0 else f"MOTOR:RIGHT:{pwm}"
 
         # İleri / Geri komutu (Çizgisel hız x)
         elif abs(v) > 0.05:
-            suffix = "hizli" if abs(v) > 0.4 else "yavas"
-            cmd = f"ileri_{suffix}" if v > 0 else f"geri_{suffix}"
+            pwm = self.max_pwm if abs(v) > 0.4 else self.min_pwm
+            cmd = f"MOTOR:FWD:{pwm}" if v > 0 else f"MOTOR:BACK:{pwm}"
 
         else:
-            cmd = "dur"
+            cmd = "MOTOR:STOP"
+
+        now = time.time()
+        self.last_cmd_time = now
 
         if cmd != self.last_cmd:
             self._send_raw(cmd)
             self.last_cmd = cmd
-            self.last_cmd_time = time.time()
+            self.last_sent_time = now
             self.get_logger().info(f"Arduino Mega Motor Komutu: {cmd}")
-        else:
-            self.last_cmd_time = time.time()
+        elif cmd != "MOTOR:STOP" and (now - self.last_sent_time) >= 0.2:
+            # Arduino Mega 750ms KOMUT_TIMEOUT_MS zaman aşımına sahip.
+            # Komut aynı kaldığı sürece 200ms'de bir tazeleyerek gönderiyoruz.
+            self._send_raw(cmd)
+            self.last_sent_time = now
 
     def _led_callback(self, msg: String):
         if self.ser_mega:
@@ -144,11 +156,15 @@ class HardwareBridgeNode(Node):
             self.get_logger().error(f"Arduino Mega seri yazma hatası: {e}")
 
     def _keepalive(self):
-        if self.last_cmd and self.last_cmd != "dur":
-            if time.time() - self.last_cmd_time > self.motor_watchdog_timeout:
-                self.last_cmd = "dur"
-                self._send_raw("dur")
+        now = time.time()
+        if self.last_cmd and self.last_cmd != "MOTOR:STOP":
+            if now - self.last_cmd_time > self.motor_watchdog_timeout:
+                self.last_cmd = "MOTOR:STOP"
+                self._send_raw("MOTOR:STOP")
                 self.get_logger().warn("Motor komutu zaman aşımı! Araç durduruldu.")
+            elif (now - self.last_sent_time) >= 0.2:
+                self._send_raw(self.last_cmd)
+                self.last_sent_time = now
 
     # ==================================================
     # SERİ PORT OKUYUCULAR
@@ -208,10 +224,14 @@ class HardwareBridgeNode(Node):
                 self.mag_pub.publish(msg)
             except (IndexError, ValueError):
                 pass
+        elif line.startswith("ERR,"):
+            self.get_logger().warn(f"Arduino Mega Hata Yanıtı: {line}")
+        elif line.startswith("ACK,"):
+            self.get_logger().debug(f"Arduino Mega Yanıtı: {line}")
 
     def destroy_node(self):
         if self.ser_mega and self.ser_mega.is_open:
-            self._send_raw("dur")
+            self._send_raw("MOTOR:STOP")
             self.ser_mega.close()
         if self.ser_uno and self.ser_uno != self.ser_mega and self.ser_uno.is_open:
             self.ser_uno.close()
