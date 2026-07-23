@@ -48,7 +48,7 @@ class GpsNode(Node):
         super().__init__('gps_node')
 
         # Parametreler
-        self.declare_parameter('gps_port', '/dev/ttyUSB0')
+        self.declare_parameter('gps_port', '/dev/ttyUSB1')
         self.declare_parameter('gps_baud', 115200)
         self.declare_parameter('map_link_print_interval', 3.0)
 

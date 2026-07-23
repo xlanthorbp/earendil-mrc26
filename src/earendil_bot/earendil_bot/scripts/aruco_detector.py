@@ -20,12 +20,16 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Point
 from std_msgs.msg import Bool, Int32
+import faulthandler
+faulthandler.enable()
 
 import subprocess
 import time
 import cv2
 import numpy as np
 import math
+
+import shutil
 
 TAG_SIZE_M = 0.20  # 20x20 cm etiket boyutu (MRC 2026 Şartnamesi)
 HFOV_DEG = 62.2   # IMX219 kamera yatay görüş açısı
@@ -34,7 +38,7 @@ HFOV_DEG = 62.2   # IMX219 kamera yatay görüş açısı
 class RPI_Camera:
     """
     Raspberry Pi 5 kamera alıcısı. Önce rpicam-vid ile dener,
-    olmazsa standart OpenCV VideoCapture (0) kullanır.
+    olmazsa V4L2 / standart OpenCV VideoCapture (0) kullanır.
     """
     def __init__(self, width=1280, height=720, framerate=15):
         self.width = width
@@ -43,36 +47,57 @@ class RPI_Camera:
         self.process = None
         self.cap = None
 
+        rpicam_bin = shutil.which('rpicam-vid') or shutil.which('libcamera-vid')
+        if rpicam_bin:
+            try:
+                cmd = [
+                    rpicam_bin,
+                    '-t', '0',
+                    '--width', str(width),
+                    '--height', str(height),
+                    '--framerate', str(framerate),
+                    '--codec', 'yuv420',
+                    '-n',
+                    '-o', '-'
+                ]
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=self.frame_size * 2
+                )
+                time.sleep(0.5)
+                if self.process.poll() is not None:
+                    # Süreç çalışamadı veya kapandı
+                    self.process = None
+            except Exception:
+                self.process = None
+
+        if self.process is None:
+            self._init_opencv_cap(width, height)
+
+    def _init_opencv_cap(self, width, height):
         try:
-            cmd = [
-                'rpicam-vid',
-                '-t', '0',
-                '--width', str(width),
-                '--height', str(height),
-                '--framerate', str(framerate),
-                '--codec', 'yuv420',
-                '-n',
-                '-o', '-'
-            ]
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                bufsize=self.frame_size * 2
-            )
-            time.sleep(0.5)
+            self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(0)
         except Exception:
-            self.process = None
             self.cap = cv2.VideoCapture(0)
-            if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
     def read(self):
         if self.process:
+            if self.process.poll() is not None:
+                # Süreç beklenmedik şekilde sonlanmışsa OpenCV'ye geç
+                self.process = None
+                self._init_opencv_cap(self.width, self.height)
+                return False, None
             try:
                 raw = self.process.stdout.read(self.frame_size)
-                if len(raw) != self.frame_size:
+                if not raw or len(raw) != self.frame_size:
                     return False, None
                 yuv = np.frombuffer(raw, dtype=np.uint8).reshape((self.height * 3 // 2, self.width))
                 frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
@@ -80,13 +105,19 @@ class RPI_Camera:
             except Exception:
                 return False, None
         elif self.cap and self.cap.isOpened():
-            return self.cap.read()
+            ret, frame = self.cap.read()
+            if ret and frame is not None and frame.size > 0:
+                return True, frame
+            return False, None
         return False, None
 
     def release(self):
         if self.process:
-            self.process.terminate()
-            self.process.wait()
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=1.0)
+            except Exception:
+                pass
         if self.cap:
             self.cap.release()
 
@@ -102,18 +133,13 @@ class ArucoDetectorNode(Node):
 
         self.cap = RPI_Camera()
 
-        # ArUco Dictionary: 5X5_100 (MRC 2026 Şartnamesi)
+        # ArUco Dictionary & Parameters: 5X5_100 (MRC 2026 Şartnamesi)
         try:
             self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100)
-            self.aruco_params = cv2.aruco.DetectorParameters()
+            self.detector = cv2.aruco.ArucoDetector(self.aruco_dict)
+            self.use_new_api = True
         except AttributeError:
             self.aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_5X5_100)
-            self.aruco_params = cv2.aruco.DetectorParameters_create()
-
-        if hasattr(cv2.aruco, "ArucoDetector"):
-            self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
-            self.use_new_api = True
-        else:
             self.use_new_api = False
 
         # Kamera Odak Uzaklığı ve Odak Merkezi (Trigonometrik hesaplamalar için)
@@ -139,61 +165,67 @@ class ArucoDetectorNode(Node):
         return corners[largest_idx][0], ids[largest_idx][0]
 
     def process_frame(self):
-        ret, frame = self.cap.read()
-        if not ret or frame is None:
-            return
+        try:
+            ret, frame = self.cap.read()
+            if not ret or frame is None or frame.size == 0:
+                return
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if self.use_new_api:
-            corners, ids, rejected = self.detector.detectMarkers(gray)
-        else:
-            corners, ids, rejected = cv2.aruco.detectMarkers(
-                gray, self.aruco_dict, parameters=self.aruco_params
-            )
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Ensure the numpy array is C-contiguous to prevent OpenCV C++ segfaults
+            gray = np.ascontiguousarray(gray)
 
-        visible_msg = Bool()
-        visible_msg.data = False
+            # Doğrudan güvenli API kullanımı
+            if self.use_new_api:
+                corners, ids, rejected = self.detector.detectMarkers(gray)
+            else:
+                corners, ids, rejected = cv2.aruco.detectMarkers(gray, self.aruco_dict)
 
-        if ids is not None and len(ids) >= 1:
-            marker_corners, marker_id = self.select_largest_marker(corners, ids)
+            visible_msg = Bool()
+            visible_msg.data = False
 
-            if marker_corners is not None:
-                # Piksel alanı ve Kenar Uzunluğu
-                area_px = cv2.contourArea(marker_corners.astype(np.float32))
-                if area_px > 0:
-                    side_px = math.sqrt(area_px)
+            if ids is not None and len(ids) >= 1:
+                marker_corners, marker_id = self.select_largest_marker(corners, ids)
 
-                    # Trigonometrik Gerçek Mesafe (Metre cinsinden)
-                    z_m = self.fx * TAG_SIZE_M / side_px
+                if marker_corners is not None:
+                    # Piksel alanı ve Kenar Uzunluğu
+                    area_px = cv2.contourArea(marker_corners.astype(np.float32))
+                    if area_px > 0:
+                        side_px = math.sqrt(area_px)
 
-                    # Piksel Merkezi
-                    c_x = int(np.mean(marker_corners[:, 0]))
-                    x_cam = (c_x - self.cx) * z_m / self.fx
+                        # Trigonometrik Gerçek Mesafe (Metre cinsinden)
+                        z_m = self.fx * TAG_SIZE_M / side_px
 
-                    # Açısal Sapma (Derece cinsinden)
-                    angle_x_deg = math.degrees(math.atan2(x_cam, z_m))
+                        # Piksel Merkezi
+                        c_x = int(np.mean(marker_corners[:, 0]))
+                        x_cam = (c_x - self.cx) * z_m / self.fx
 
-                    visible_msg.data = True
+                        # Açısal Sapma (Derece cinsinden)
+                        angle_x_deg = math.degrees(math.atan2(x_cam, z_m))
 
-                    # 1. Mesafe ve Açı Yayınla
-                    pose_msg = Point()
-                    pose_msg.x = float(angle_x_deg)
-                    pose_msg.y = 0.0
-                    pose_msg.z = float(z_m)
-                    self.pose_pub.publish(pose_msg)
+                        visible_msg.data = True
 
-                    # 2. Sayısal ArUco ID Yayınla
-                    id_msg = Int32()
-                    id_msg.data = int(marker_id)
-                    self.id_pub.publish(id_msg)
+                        # 1. Mesafe ve Açı Yayınla
+                        pose_msg = Point()
+                        pose_msg.x = float(angle_x_deg)
+                        pose_msg.y = 0.0
+                        pose_msg.z = float(z_m)
+                        self.pose_pub.publish(pose_msg)
 
-                    self.get_logger().info(
-                        f"ArUco Algılandı -> ID: {marker_id} | Mesafe: {z_m:.2f}m | Açı: {angle_x_deg:.1f}°",
-                        throttle_duration_sec=1.0
-                    )
+                        # 2. Sayısal ArUco ID Yayınla
+                        id_msg = Int32()
+                        id_msg.data = int(marker_id)
+                        self.id_pub.publish(id_msg)
 
-        # Görünürlük Durumu Yayınla
-        self.visible_pub.publish(visible_msg)
+                        self.get_logger().info(
+                            f"ArUco Algılandı -> ID: {marker_id} | Mesafe: {z_m:.2f}m | Açı: {angle_x_deg:.1f}°",
+                            throttle_duration_sec=1.0
+                        )
+
+            # Görünürlük Durumu Yayınla
+            self.visible_pub.publish(visible_msg)
+
+        except Exception as e:
+            self.get_logger().warn(f"Frame işleme hatası: {e}", throttle_duration_sec=2.0)
 
     def destroy_node(self):
         if self.cap:
