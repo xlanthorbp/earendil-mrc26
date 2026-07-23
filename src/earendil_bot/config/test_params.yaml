@@ -45,6 +45,28 @@ gps_nav_main:
     kp_aruco_steer: 0.05             # Görsel ArUco hizalama P kazancı
     sensing_wait_time: 5.0           # Hedefte Sarı LED algılama bekleme süresi [saniye]
 
+    # 10 GPS Hedef Parametresi (Değeri 0.0 olan hedefler otomatik atlanır)
+    target1_lat: 39.815910 
+    target1_lon: 30.528666
+    target2_lat: 39.815850
+    target2_lon: 30.528616
+    target3_lat: 0.0
+    target3_lon: 0.0
+    target4_lat: 0.0
+    target4_lon: 0.0
+    target5_lat: 0.0
+    target5_lon: 0.0
+    target6_lat: 0.0
+    target6_lon: 0.0
+    target7_lat: 0.0
+    target7_lon: 0.0
+    target8_lat: 0.0
+    target8_lon: 0.0
+    target9_lat: 0.0
+    target9_lon: 0.0
+    target10_lat: 0.0
+    target10_lon: 0.0
+
 # ---------------------------------------------------------
 # Komut Kaydı ve Rota Tersleme ile Üsse Dönüş (path_recorder)
 # ---------------------------------------------------------

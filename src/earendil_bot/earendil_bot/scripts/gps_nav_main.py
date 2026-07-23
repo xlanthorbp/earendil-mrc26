@@ -54,19 +54,31 @@ class GpsNavMainNode(Node):
         self.kp_aruco_steer = self.get_parameter('kp_aruco_steer').value
         self.sensing_wait_time = self.get_parameter('sensing_wait_time').value
 
-        # 10 GPS Hedef Listesi (Örnek Şartname Koordinatları)
-        self.waypoints = [
-            (1, 39.9017797, 32.7704813),
-            (2, 39.9017482, 32.7704942),
-            (3, 39.9017200, 32.7705100),
-            (4, 39.9017000, 32.7705300),
-            (5, 39.9016800, 32.7705500),
-            (6, 39.9016600, 32.7705700),
-            (7, 39.9016400, 32.7705900),
-            (8, 39.9016200, 32.7706100),
-            (9, 39.9016000, 32.7706300),
-            (10, 39.9015800, 32.7706500),
+        # 10 GPS Hedef Parametresinin Tanımlanması (0.0 olan hedefler atlanır)
+        default_coords = [
+            (39.9017797, 32.7704813),
+            (39.9017482, 32.7704942),
+            (39.9017200, 32.7705100),
+            (39.9017000, 32.7705300),
+            (39.9016800, 32.7705500),
+            (39.9016600, 32.7705700),
+            (39.9016400, 32.7705900),
+            (39.9016200, 32.7706100),
+            (39.9016000, 32.7706300),
+            (39.9015800, 32.7706500),
         ]
+
+        self.waypoints = []
+        for i in range(1, 11):
+            def_lat, def_lon = default_coords[i - 1]
+            self.declare_parameter(f'target{i}_lat', def_lat)
+            self.declare_parameter(f'target{i}_lon', def_lon)
+
+            lat = self.get_parameter(f'target{i}_lat').value
+            lon = self.get_parameter(f'target{i}_lon').value
+
+            if lat != 0.0 or lon != 0.0:
+                self.waypoints.append((i, lat, lon))
 
         self.current_wp_index = 0
 
@@ -106,7 +118,12 @@ class GpsNavMainNode(Node):
 
         # 10 Hz Kontrol Döngüsü
         self.timer = self.create_timer(0.1, self.control_loop)
-        self.get_logger().info(f"MRC 2026 Ana Görev Düğümü (gps_nav_main) Başlatıldı. GPS Hassasiyeti: {self.gps_arrival_radius}m")
+        self.get_logger().info(
+            f"MRC 2026 Ana Görev Düğümü (gps_nav_main) Başlatıldı. "
+            f"Aktif Hedef Sayısı: {len(self.waypoints)}/10, GPS Hassasiyeti: {self.gps_arrival_radius}m"
+        )
+        for wp_seq, w_lat, w_lon in self.waypoints:
+            self.get_logger().info(f"  Aktif Hedef #{wp_seq}: Lat={w_lat:.7f}, Lon={w_lon:.7f}")
 
     def init_csv_log(self):
         try:
@@ -173,6 +190,11 @@ class GpsNavMainNode(Node):
             return
 
         self.publish_status("IN_PROGRESS")
+
+        if not self.waypoints:
+            self.get_logger().warn("Geçerli GPS hedefi tanımlanmadı (Tüm parametreler 0.0)! Bekleniyor...", throttle_duration_sec=3.0)
+            self.stop_robot()
+            return
 
         if self.mag_heading is None or (time.time() - self.last_mag_time > 2.0):
             self.get_logger().warn("Pusula verisi bekleniyor (/mag/heading)...", throttle_duration_sec=3.0)
@@ -250,7 +272,7 @@ class GpsNavMainNode(Node):
             if time.time() - self.sensing_start_time >= self.sensing_wait_time:
                 self.current_wp_index += 1
                 if self.current_wp_index >= len(self.waypoints):
-                    self.get_logger().info("🏆 TÜM 10 HEDEF BAŞARIYLA TAMAMLANDI! Üsse dönüş tetikleniyor.")
+                    self.get_logger().info(f"🏆 TÜM {len(self.waypoints)} HEDEF BAŞARIYLA TAMAMLANDI! Üsse dönüş tetikleniyor.")
                     self.state = "MISSION_COMPLETED"
                 else:
                     self.get_logger().info(f"Sıradaki Hedefe Geçiliyor: Waypoint #{self.waypoints[self.current_wp_index][0]}")
