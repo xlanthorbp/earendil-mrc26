@@ -5,6 +5,7 @@ log/
 *.log
 *.json
 _dormant/
+*.zip
 
 # MATLAB/Simulink
 *.asv
