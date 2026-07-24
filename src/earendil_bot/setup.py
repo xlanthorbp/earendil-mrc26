@@ -37,6 +37,7 @@ setup(
             'timed_nav_test = earendil_bot.tests.timed_nav_test:main',
             'heading_test = earendil_bot.tests.heading_test:main',
             'hardware_check = earendil_bot.hardware_check:main',
+            'manualteleop = earendil_bot.manualteleop.manualteleop:main',
         ],
     },
 )

@@ -46,3 +46,18 @@ aruco_detector:
     camera_id: 0                  # Raspberry Pi 5 / USB Kamera indeksi
     dictionary: "5X5_100"         # MRC 2026 Şartnamesi: 5x5_100 ArUco kütüphanesi
     marker_size_m: 0.20           # MRC 2026 Şartnamesi: 20x20 cm karton etiket boyutu
+
+# ---------------------------------------------------------
+# Manuel Kontrol ve Fotoğraf Çekme Düğümü (manual_teleop)
+# ---------------------------------------------------------
+manual_teleop:
+  ros__parameters:
+    forward_pwm: 80               # İleri hareket PWM hızı (0-255)
+    back_pwm: 80                  # Geri hareket PWM hızı (0-255)
+    turn_pwm: 60                  # Dönüş hareketleri PWM hızı (0-255)
+    repeat_ms: 100                # Tuş basılı tutulurken komut tekrarlama sıklığı [ms]
+    motor_cmd_topic: "/motor/command" # Motor komut konusu
+    photo_dir: "~/rover_photos"    # P tuşu ile çekilen fotoğrafların kayıt dizini
+    photo_width: 1920             # Çekilecek fotoğraf genişliği [piksel]
+    photo_height: 1080            # Çekilecek fotoğraf yüksekliği [piksel]
+    photo_timeout_ms: 500         # Kamera sensörü pozlama bekleme süresi [ms]
